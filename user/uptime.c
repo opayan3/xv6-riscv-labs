@@ -1,7 +1,7 @@
 #include "kernel/types.h"
 #include "user/user.h"
 
-int main(int argc, char *argv[]){
+int main(void){
 
   printf("up ");
   int ticks = uptime();
