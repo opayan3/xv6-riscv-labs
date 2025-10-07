@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "pstat.h"
 
 struct cpu cpus[NCPU];
 
@@ -119,6 +120,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->cputime = 0;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -424,6 +426,58 @@ wait(uint64 addr)
     
     // Wait for a child to exit.
     sleep(p, &wait_lock);  //DOC: wait-sleep
+  }
+}
+
+//wait2
+int
+wait2(uint64 status_addr, uint64 rusage_addr)
+{
+  struct proc *p = myproc();
+  struct proc *np;
+  int havekids, pid;
+
+  acquire(&wait_lock);
+
+  for(;;){
+    havekids = 0;
+    for (np = proc; np < &proc[NPROC]; np++){
+      if(np-> parent == p){
+        havekids = 1;
+        acquire(&np->lock);
+
+        if(np->state == ZOMBIE){
+          pid = np->pid;
+
+          if(status_addr !=0){
+            if(copyout(p->pagetable, status_addr, (char *)&np->xstate, sizeof(np->xstate)) < 0){
+              release(&np->lock);
+              release(&wait_lock);
+              return -1;
+            }
+          }
+          if(rusage_addr != 0){
+            struct rusage ru;
+            ru.cputime = np->cputime;
+            if(copyout(p->pagetable, rusage_addr, (char *)&ru, sizeof(ru)) < 0){
+              release(&np->lock);
+              release(&wait_lock);
+              return -1;
+            }
+          }
+          freeproc(np);
+          release(&np->lock);
+          release(&wait_lock);
+          return pid;
+        }
+        release(&np->lock);
+      }
+    }
+    if(!havekids || p->killed){
+      release(&wait_lock);
+      return -1;
+    }
+    sleep(p, &wait_lock);
   }
 }
 
