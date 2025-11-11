@@ -257,9 +257,8 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
-      return -1;
-    }
+    sz += n;
+
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
@@ -282,10 +281,21 @@ fork(void)
   }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
-    freeproc(np);
-    release(&np->lock);
-    return -1;
+  for(uint64 va = 0; va < p->sz; va += PGSIZE){
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if(pte && (*pte & PTE_V)){
+      uint64 pa = PTE2PA(*pte);
+      uint flags = PTE_FLAGS(*pte);
+      char *mem = kalloc();
+      if(mem == 0){
+        goto fork_err;
+      }
+      memmove(mem, (char*)pa, PGSIZE);
+      if(mappages(np->pagetable, va, PGSIZE, (uint64)mem, flags) != 0){
+        kfree(mem);
+        goto fork_err;
+      }
+    }
   }
   np->sz = p->sz;
 
@@ -316,6 +326,11 @@ fork(void)
   release(&np->lock);
 
   return pid;
+
+  fork_err:
+    freeproc(np);
+    release(&np->lock);
+    return -1;
 }
 
 // Pass p's abandoned children to init.
