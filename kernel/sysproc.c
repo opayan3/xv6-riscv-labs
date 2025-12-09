@@ -113,3 +113,102 @@ sys_freepmem(void)
   uint64 pages = kfreepages_count();
   return pages * PGSIZE;
 }
+
+uint64
+sys_sem_init(void)
+{
+  uint64 useraddr;
+  int shared;
+  int value;
+
+  if (argaddr(0, &useraddr) < 0 || argint(1, &shared) < 0 || argint(2, &value) < 0)
+    return -1;
+
+  int id = semalloc();
+  if (id < 0)
+    return -1;
+
+  struct semaphore *s = &semtable.sem[id];
+  acquire(&s->lock);
+  s->count = value;
+  release(&s->lock);
+
+  sem_t semid = id;
+  struct proc *p = myproc();
+  if (copyout(p->pagetable, useraddr, (char*)&semid, sizeof(semid)) < 0) {
+    semdealloc(id);
+    return -1;
+  }
+  return 0;
+}
+
+uint64
+sys_sem_destroy(void)
+{
+  uint64 useraddr;
+  if (argaddr(0, &useraddr) < 0)
+    return -1;
+  struct proc *p = myproc();
+  sem_t semid;
+  if (copyin(p->pagetable, (char*)&semid, useraddr, sizeof(semid)) < 0)
+    return -1;
+
+  struct semaphore *s = get_semaphore(semid);
+  if (s == 0)
+    return -1;
+
+  semdealloc(semid);
+  return 0;
+
+}
+
+uint64
+sys_sem_wait(void)
+{
+  uint64 useraddr;
+  if (argaddr(0, &useraddr) < 0)
+    return -1;
+
+  struct proc* p = myproc();
+  sem_t semid;
+  if (copyin(p->pagetable, (char*)&semid, useraddr, sizeof(semid)) < 0)
+    return -1;
+
+  struct semaphore *s = get_semaphore(semid);
+  if (s == 0)
+    return -1;
+
+  acquire(&s->lock);
+  while (s->count == 0)
+  {
+    sleep(s, &s->lock);
+  }
+  s->count--;
+  release(&s->lock);
+
+  return 0;
+}
+
+uint64
+sys_sem_post(void)
+{
+  uint64 useraddr;
+  if (argaddr(0, &useraddr) < 0)
+    return -1;
+
+  struct proc *p = myproc();
+  sem_t semid;
+  if (copyin(p->pagetable, (char*)&semid, useraddr, sizeof(semid)) < 0)
+    return -1;
+
+  struct semaphore *s = get_semaphore(semid);
+  if (s == 0)
+    return -1;
+
+  acquire(&s->lock);
+  s->count++;
+  wakeup(s);
+  release(&s->lock);
+
+  return 0;
+}
